@@ -1,0 +1,107 @@
+version: "3.9"
+
+
+services:
+  postgres:
+    image: postgres:15
+    env_file:
+      - ../.env
+    ports:
+      - "5433:5432"
+    volumes:
+      - citadel_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "citadel"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+
+  redis:
+    image: redis:7
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:6333/collections"]
+    #   interval: 10s
+    #   retries: 5
+    #   start_period: 5s
+    #   timeout: 5s
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    env_file:
+      - ../.env
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio_data:/data
+
+  api:
+    build:
+      context: ../
+      dockerfile: docker-rag/Dockerfile.api
+    env_file:
+      - ../.env
+    ports:
+      - "8001:8000"
+    volumes:
+      - ../storage:/app/storage
+      - ../api/alembic:/app/alembic
+    depends_on:
+      postgres:
+          condition: service_healthy
+      redis:
+          condition: service_healthy
+    networks:
+      default:
+      shared-ai-net:
+
+  worker:
+    build:
+      context: ../
+      dockerfile: docker-rag/Dockerfile.worker
+    env_file:
+      - ../.env
+    volumes:
+      - ../storage:/app/storage
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+      - minio
+    networks:
+      default:
+      shared-ai-net:
+
+  ui:
+    build:
+      context: ../
+      dockerfile: docker-rag/Dockerfile.ui
+    env_file:
+      - ../.env
+    ports:
+      - "5174:5173"
+    depends_on:
+      - api
+
+volumes:
+  citadel_pgdata:
+  minio_data:
+
+networks:
+  shared-ai-net:
+    external: true

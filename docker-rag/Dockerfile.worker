@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY worker/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY worker /app/worker
+COPY .env /app/worker/app/.env
+COPY api /app/api
+
+ENV PYTHONPATH=/app/worker:/app
+
+CMD ["python", "-m", "app.main"]
