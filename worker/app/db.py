@@ -136,5 +136,15 @@ class EvalRun(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class Event(Base):
+    __tablename__ = "events"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    tenant_id = Column(String, nullable=False)
+    event_type = Column(String, nullable=False)
+    payload_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

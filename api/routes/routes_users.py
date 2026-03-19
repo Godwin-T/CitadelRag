@@ -11,6 +11,7 @@ from api.db import models
 from api.routes.deps import get_db, require_org_admin
 from api.schemas.auth import PasswordResetLink
 from api.schemas.user import UserCreate, UserOut
+from api.services.events import record_event
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -33,6 +34,20 @@ def create_user(
 
     db.add(models.OrgMembership(user_id=user.id, org_id=org_membership.org_id, role="member"))
     db.commit()
+
+    tenant = (
+        db.query(models.Tenant)
+        .filter(models.Tenant.org_id == org_membership.org_id)
+        .order_by(models.Tenant.created_at.asc())
+        .first()
+    )
+    if tenant:
+        record_event(
+            db,
+            tenant.id,
+            "user_created",
+            {"user_id": user.id, "user_email": user.email, "user_name": user.name, "tenant_id": tenant.id},
+        )
 
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

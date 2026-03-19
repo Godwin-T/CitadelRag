@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy.orm import Session
 
-from app.db import SessionLocal, Document, DocumentFile, ChunkStrategy, Chunk, EmbeddingVersion, Embedding
+from app.db import SessionLocal, Document, DocumentFile, ChunkStrategy, Chunk, EmbeddingVersion, Embedding, Event
 from app.services.extraction import extract_text
 from app.services.chunking import chunk_text
 from app.services.embeddings import embed_texts
@@ -111,6 +111,14 @@ def ingest_document(
         upsert_vectors(points)
         logger.info("qdrant upsert complete | points={}", len(points))
         doc.status = "ready"
+        db.commit()
+        db.add(
+            Event(
+                tenant_id=tenant_id,
+                event_type="ingestion_completed",
+                payload_json={"document_id": document_id, "document_title": doc.title},
+            )
+        )
         db.commit()
         logger.info("ingest done | document_id={}", document_id)
     finally:

@@ -75,7 +75,12 @@ def upload_document(
     if chunk_strategy_id:
         payload["chunk_strategy_id"] = chunk_strategy_id
     enqueue_ingest(payload)
-    record_event(db, tenant_id, "document_uploaded", {"document_id": doc.id})
+    record_event(
+        db,
+        tenant_id,
+        "document_uploaded",
+        {"document_id": doc.id, "document_title": doc.title, "source_type": doc.source_type},
+    )
     logger.info("upload queued | document_id={} tenant_id={}", doc.id, tenant_id)
     return DocumentUploadResponse(document_id=doc.id, status=doc.status)
 

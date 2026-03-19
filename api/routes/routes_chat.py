@@ -6,6 +6,7 @@ from api.routes.deps import get_current_user, get_current_org_membership, get_db
 from api.routes.routes_query import run_query
 from api.schemas.chat import ChatMessageCreate, ChatMessageOut, ChatSessionCreate, ChatSessionOut
 from api.schemas.query import QueryRequest
+from api.services.events import record_event
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -22,6 +23,12 @@ def create_session(
     db.add(session)
     db.commit()
     db.refresh(session)
+    record_event(
+        db,
+        session.tenant_id,
+        "chat_session_created",
+        {"session_id": session.id, "title": session.title or "New Chat", "user_id": user.id},
+    )
     return ChatSessionOut(
         id=session.id,
         tenant_id=session.tenant_id,
@@ -102,6 +109,12 @@ def send_message(
     db.commit()
     db.refresh(user_msg)
 
+    if not session.title or session.title.strip().lower() in {"new chat", "chat"}:
+        trimmed = (payload.message or "").strip()
+        if trimmed:
+            session.title = trimmed[:60]
+            db.commit()
+
     query_payload = QueryRequest(
         tenant_id=session.tenant_id,
         session_id=session.id,
@@ -133,3 +146,26 @@ def send_message(
         content=assistant_msg.content,
         citations=assistant_msg.citations_json,
     )
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+    org_membership: models.OrgMembership = Depends(get_current_org_membership),
+):
+    session = db.query(models.ChatSession).filter(models.ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    require_tenant_membership(session.tenant_id, db, user, org_membership)
+    db.query(models.ChatMessage).filter(models.ChatMessage.session_id == session_id).delete()
+    db.delete(session)
+    db.commit()
+    record_event(
+        db,
+        session.tenant_id,
+        "chat_session_deleted",
+        {"session_id": session_id, "user_id": user.id},
+    )
+    return {"status": "ok"}

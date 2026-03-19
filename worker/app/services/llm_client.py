@@ -63,6 +63,5 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not api_key:
         raise ValueError("Missing Embedding API key")
     client = _client(api_key=api_key, base_url=base_url)
-    logger.info(f"Api Kehy: {api_key}, Base URL: {base_url}")
     response = client.embeddings.create(model=settings.embed_model, input=texts, encoding_format="float")
     return [item.embedding for item in response.data]

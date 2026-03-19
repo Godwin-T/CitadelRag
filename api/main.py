@@ -17,6 +17,7 @@ from api.routes import (
     routes_chunk_strategies,
     routes_settings,
     routes_orgs,
+    routes_events,
 )
 from api.services.storage import ensure_bucket_ready
 from api.core.config import get_settings
@@ -69,6 +70,7 @@ app.include_router(routes_analytics.router, prefix=settings.api_prefix)
 app.include_router(routes_analytics.eval_router, prefix=settings.api_prefix)
 app.include_router(routes_chunk_strategies.router, prefix=settings.api_prefix)
 app.include_router(routes_settings.router, prefix=settings.api_prefix)
+app.include_router(routes_events.router, prefix=settings.api_prefix)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

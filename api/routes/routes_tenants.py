@@ -5,6 +5,7 @@ from api.routes.deps import get_current_user, get_db, get_current_org_membership
 from api.db import models
 from api.schemas.tenant import TenantCreate, TenantOut
 from api.schemas.org import TenantMemberCreate
+from api.services.events import record_event
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -48,6 +49,12 @@ def create_tenant(
     membership = models.Membership(user_id=user.id, tenant_id=tenant.id, role="owner")
     db.add(membership)
     db.commit()
+    record_event(
+        db,
+        tenant.id,
+        "tenant_created",
+        {"tenant_id": tenant.id, "tenant_name": tenant.name, "actor_user_id": user.id},
+    )
     return TenantOut(id=tenant.id, name=tenant.name, slug=tenant.slug, org_id=tenant.org_id)
 
 
@@ -101,4 +108,10 @@ def add_tenant_member(
         return {"status": "exists"}
     db.add(models.Membership(user_id=user.id, tenant_id=tenant_id, role=payload.role))
     db.commit()
+    record_event(
+        db,
+        tenant.id,
+        "tenant_member_added",
+        {"tenant_id": tenant.id, "tenant_name": tenant.name, "user_id": user.id, "member_id": payload.user_id, "role": payload.role},
+    )
     return {"status": "ok"}
