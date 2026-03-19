@@ -5,7 +5,7 @@ export default {
     extend: {
       fontFamily: {
         display: ["Sora", "sans-serif"],
-        body: ["IBM Plex Sans", "sans-serif"]
+        body: ["Manrope", "sans-serif"]
       }
     }
   },

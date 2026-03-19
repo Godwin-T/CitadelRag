@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  MessageSquare,
-  FileText,
-  BarChart3,
-  Settings as SettingsIcon,
-  Building2,
-  ClipboardList
-} from "lucide-react";
+import { BarChart3, Building2, FileText, LayoutGrid, MessageSquare, Trash2, Users } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import AuthForm, { AuthMode } from "./components/AuthForm";
+import PageHeader from "./components/PageHeader";
+import SidebarNav from "./components/SidebarNav";
 import { apiFetch } from "./lib/api";
 
-const navItems = ["Chat", "Documents", "Evaluations", "Analytics", "Settings", "Organization"] as const;
+const navItems = ["Dashboard", "Documents", "Organization", "Usage", "User Management", "Chat"] as const;
 
 type NavItem = (typeof navItems)[number];
 
@@ -91,6 +87,15 @@ type ChatMessage = {
   citations?: Array<{ chunk_id: string; document_id: string; score: number; text: string }>;
 };
 
+type ActivityEvent = {
+  id: string;
+  tenant_id: string;
+  tenant_name?: string | null;
+  event_type: string;
+  payload: Record<string, any>;
+  created_at: string;
+};
+
 type DocumentPreview = {
   document_id: string;
   title: string;
@@ -108,7 +113,7 @@ const sampleAnalytics = [
 ];
 
 export default function App() {
-  const [active, setActive] = useState<NavItem>("Chat");
+  const [active, setActive] = useState<NavItem>("Dashboard");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [authed, setAuthed] = useState<boolean>(() => Boolean(localStorage.getItem("access_token")));
@@ -131,12 +136,12 @@ export default function App() {
   const [queryCitations, setQueryCitations] = useState<QueryResponse["citations"]>([]);
   const [noAnswer, setNoAnswer] = useState<boolean>(false);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [chatTitleInput, setChatTitleInput] = useState("");
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [useSelectedOnly, setUseSelectedOnly] = useState<boolean>(false);
   const [sessionId] = useState<string>(() =>
@@ -145,11 +150,9 @@ export default function App() {
   const [previewDocId, setPreviewDocId] = useState<string>("");
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [previewData, setPreviewData] = useState<DocumentPreview | null>(null);
-  const [previewExpanded, setPreviewExpanded] = useState(false);
-  const [rightPanelWidth, setRightPanelWidth] = useState(420);
-  const resizingRef = useRef(false);
   const [highlightText, setHighlightText] = useState<string>("");
   const [highlightMode, setHighlightMode] = useState<"highlight_only" | "highlight_plus_docs">("highlight_only");
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const [chunkStrategies, setChunkStrategies] = useState<ChunkStrategy[]>([]);
   const [settingsState, setSettingsState] = useState<SettingsState>({
@@ -198,15 +201,15 @@ export default function App() {
   const isOrgAdmin = orgInfo?.role === "owner" || orgInfo?.role === "admin";
   const visibleNavItems = isOrgAdmin
     ? navItems
-    : navItems.filter((item) => !["Organization", "Settings", "Analytics", "Evaluations"].includes(item));
+    : navItems.filter((item) => !["Organization", "Usage", "User Management"].includes(item));
 
   const navIconComponents: Record<NavItem, JSX.Element> = {
-    Chat: <MessageSquare className="h-4 w-4" />,
+    Dashboard: <LayoutGrid className="h-4 w-4" />,
     Documents: <FileText className="h-4 w-4" />,
-    Evaluations: <ClipboardList className="h-4 w-4" />,
-    Analytics: <BarChart3 className="h-4 w-4" />,
-    Settings: <SettingsIcon className="h-4 w-4" />,
-    Organization: <Building2 className="h-4 w-4" />
+    Organization: <Building2 className="h-4 w-4" />,
+    Usage: <BarChart3 className="h-4 w-4" />,
+    "User Management": <Users className="h-4 w-4" />,
+    Chat: <MessageSquare className="h-4 w-4" />
   };
 
   const slugify = (value: string) =>
@@ -216,15 +219,41 @@ export default function App() {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)+/g, "");
 
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeToNav: Record<string, NavItem> = {
+    "/dashboard": "Dashboard",
+    "/documents": "Documents",
+    "/organization": "Organization",
+    "/usage": "Usage",
+    "/user-management": "User Management",
+    "/chat": "Chat"
+  };
+  const navToRoute: Record<NavItem, string> = {
+    Dashboard: "/dashboard",
+    Documents: "/documents",
+    Organization: "/organization",
+    Usage: "/usage",
+    "User Management": "/user-management",
+    Chat: "/chat"
+  };
+
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
   useEffect(() => {
-    if (!isOrgAdmin && ["Organization", "Settings", "Analytics", "Evaluations"].includes(active)) {
-      setActive("Chat");
+    const mapped = routeToNav[location.pathname];
+    if (mapped && mapped !== active) {
+      setActive(mapped);
     }
-  }, [isOrgAdmin, active]);
+  }, [location.pathname, active]);
+
+  useEffect(() => {
+    if (!isOrgAdmin && ["Organization", "Usage", "User Management"].includes(active)) {
+      navigate("/dashboard");
+    }
+  }, [isOrgAdmin, active, navigate]);
 
   if (typeof window !== "undefined" && window.location.pathname.startsWith("/reset-password")) {
     return (
@@ -298,6 +327,11 @@ export default function App() {
   }, [authed, isOrgAdmin]);
 
   useEffect(() => {
+    if (!authed) return;
+    fetchEvents();
+  }, [authed, tenantId]);
+
+  useEffect(() => {
     if (!authed || !isOrgAdmin) return;
     apiFetch("/users")
       .then((data) => setUserOptions(data || []))
@@ -329,6 +363,12 @@ export default function App() {
       .catch(() => setDocuments([]));
   };
 
+  const fetchEvents = () => {
+    apiFetch("/events?limit=12")
+      .then((data) => setActivityEvents(data || []))
+      .catch(() => setActivityEvents([]));
+  };
+
   const fetchChatSessions = async () => {
     if (!tenantId) {
       setChatSessions([]);
@@ -340,7 +380,8 @@ export default function App() {
       const data = await apiFetch(`/chat/sessions?tenant_id=${tenantId}`);
       setChatSessions(data || []);
       if (data?.length) {
-        setActiveSessionId(data[0].id);
+        const stillExists = data.find((session: ChatSession) => session.id === activeSessionId);
+        setActiveSessionId(stillExists ? stillExists.id : data[0].id);
       } else if (isOrgAdmin || tenantId) {
         const created = await apiFetch("/chat/sessions", {
           method: "POST",
@@ -423,6 +464,11 @@ export default function App() {
     fetchChatMessages(activeSessionId);
   }, [authed, activeSessionId]);
 
+  useEffect(() => {
+    if (!chatScrollRef.current) return;
+    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+  }, [chatMessages.length]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     setSelectedFiles(files);
@@ -464,6 +510,7 @@ export default function App() {
         fileInputRef.current.value = "";
       }
       fetchDocuments();
+      fetchEvents();
       setUploadTitleEdited(false);
     } catch (err: any) {
       setUploadMessage(err?.message || "Upload failed.");
@@ -552,6 +599,8 @@ export default function App() {
         })
       });
       setChatMessages((prev) => [...prev, data]);
+      await fetchChatSessions();
+      fetchEvents();
       setHighlightText("");
     } catch (err: any) {
       setChatError(err?.message || "Chat failed.");
@@ -566,7 +615,7 @@ export default function App() {
       return;
     }
     setChatError(null);
-    const title = chatTitleInput.trim() || "New Chat";
+    const title = "New Chat";
     try {
       const created = await apiFetch("/chat/sessions", {
         method: "POST",
@@ -574,9 +623,31 @@ export default function App() {
       });
       setChatSessions((prev) => [created, ...prev]);
       setActiveSessionId(created.id);
-      setChatTitleInput("");
+      fetchEvents();
     } catch (err: any) {
       setChatError(err?.message || "Failed to create chat session.");
+    }
+  };
+
+  const handleDeleteChatSession = async (sessionId: string) => {
+    if (!tenantId) return;
+    const ok = typeof window !== "undefined" ? window.confirm("Delete this chat session?") : false;
+    if (!ok) return;
+    try {
+      await apiFetch(`/chat/sessions/${sessionId}`, { method: "DELETE" });
+      const remaining = chatSessions.filter((session) => session.id !== sessionId);
+      setChatSessions(remaining);
+      if (activeSessionId === sessionId) {
+        if (remaining.length) {
+          setActiveSessionId(remaining[0].id);
+        } else {
+          setActiveSessionId("");
+          setChatMessages([]);
+        }
+      }
+      fetchEvents();
+    } catch (err: any) {
+      setChatError(err?.message || "Failed to delete chat.");
     }
   };
 
@@ -589,37 +660,10 @@ export default function App() {
         `/documents/${documentId}/preview?tenant_id=${tenantId}`
       );
       setPreviewData(data);
-      setPreviewExpanded(true);
     } catch (err) {
       setPreviewData(null);
     } finally {
       setPreviewLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    const handleMove = (event: MouseEvent) => {
-      if (!resizingRef.current) return;
-      const maxWidth = Math.min(900, window.innerWidth - 200);
-      const newWidth = Math.min(maxWidth, Math.max(280, window.innerWidth - event.clientX - 24));
-      setRightPanelWidth(newWidth);
-    };
-    const handleUp = () => {
-      resizingRef.current = false;
-    };
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-    };
-  }, []);
-
-  const handleHighlightMouseUp = () => {
-    const selection = window.getSelection();
-    const text = selection?.toString() || "";
-    if (text.trim().length >= 20) {
-      setHighlightText(text.trim());
     }
   };
 
@@ -688,6 +732,7 @@ export default function App() {
       setTenantNameInput("");
       setTenantSlugInput("");
       setTenantCreateMessage("Tenant created.");
+      fetchEvents();
     } catch (err: any) {
       setTenantCreateMessage(err?.message || "Failed to create tenant.");
     } finally {
@@ -722,6 +767,7 @@ export default function App() {
       setNewUserName("");
       setNewUserTempPassword("");
       setNewUserMessage("User created. Copy the reset link.");
+      fetchEvents();
     } catch (err: any) {
       setNewUserMessage(err?.message || "Failed to create user.");
     }
@@ -740,6 +786,7 @@ export default function App() {
         body: JSON.stringify({ user_id: assignUserId, role: assignRole })
       });
       setAssignMessage("User assigned to tenant.");
+      fetchEvents();
     } catch (err: any) {
       setAssignMessage(err?.message || "Failed to assign user.");
     } finally {
@@ -751,6 +798,732 @@ export default function App() {
   const activeSession = chatSessions.find((session) => session.id === activeSessionId);
   const activeTenantName =
     tenants.find((tenant) => tenant.id === tenantId)?.name || (tenantId ? tenantId.slice(0, 8) : "No tenant");
+
+  const formatEventTime = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString();
+  };
+
+  const formatEvent = (event: ActivityEvent) => {
+    const payload = event.payload || {};
+    switch (event.event_type) {
+      case "document_uploaded":
+        return {
+          title: "Document Uploaded",
+          detail: payload.document_title || payload.document_id || "New document added"
+        };
+      case "ingestion_completed":
+        return {
+          title: "Ingestion Completed",
+          detail: payload.document_title || payload.document_id || "Document indexed"
+        };
+      case "query_executed":
+        return {
+          title: "Query Executed",
+          detail: payload.query_id ? `Query ${String(payload.query_id).slice(0, 8)}` : "Query run"
+        };
+      case "tenant_created":
+        return {
+          title: "Tenant Created",
+          detail: payload.tenant_name || event.tenant_name || "New tenant"
+        };
+      case "tenant_member_added":
+        return {
+          title: "User Assigned",
+          detail: payload.role ? `Role: ${payload.role}` : "User added to tenant"
+        };
+      case "user_created":
+        return {
+          title: "User Created",
+          detail: payload.user_email || payload.user_name || "New user"
+        };
+      case "chat_session_created":
+        return {
+          title: "Chat Started",
+          detail: payload.title || "New chat"
+        };
+      case "chat_session_deleted":
+        return {
+          title: "Chat Deleted",
+          detail: "Session removed"
+        };
+      default:
+        return {
+          title: event.event_type.replace(/_/g, " "),
+          detail: event.tenant_name || "Activity"
+        };
+    }
+  };
+
+  const dashboardEvents = activityEvents.filter((event) =>
+    ["document_uploaded", "ingestion_completed", "chat_session_deleted"].includes(event.event_type)
+  );
+
+  const lastAssistantCitations =
+    [...chatMessages]
+      .reverse()
+      .find((msg) => msg.role === "assistant" && msg.citations && msg.citations.length > 0)
+      ?.citations ?? [];
+  const navConfig = visibleNavItems.map((item) => ({
+    label: item,
+    path: navToRoute[item],
+    icon: navIconComponents[item]
+  }));
+
+  const renderDashboard = () => (
+    <section className="space-y-6">
+      <PageHeader
+        eyebrow="Admin Portal"
+        title="Dashboard"
+        subtitle="A realtime pulse of your RAG operations and governance."
+      />
+      <div className="grid gap-4 lg:grid-cols-4">
+        {[
+          { label: "Active Tenants", value: orgMetrics?.total_tenants ?? "—" },
+          { label: "Governed Users", value: orgMetrics?.total_users ?? "—" },
+          { label: "Total Documents", value: orgMetrics?.total_documents ?? "—" },
+          { label: "Monthly Queries", value: orgMetrics?.total_queries ?? "—" }
+        ].map((metric) => (
+          <div key={metric.label} className="card p-5 space-y-2">
+            <div className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{metric.label}</div>
+            <div className="text-2xl font-semibold">{metric.value}</div>
+            <div className="h-1 rounded-full bg-[color:var(--accent-soft)]" />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="card p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="font-display text-lg">Recent Activity</div>
+            <span className="text-xs text-[color:var(--muted)]">Last 7 days</span>
+          </div>
+          <div className="space-y-3">
+            {dashboardEvents.length === 0 && (
+              <div className="text-sm text-[color:var(--muted)]">No recent activity yet.</div>
+            )}
+            {dashboardEvents.map((event) => {
+              const formatted = formatEvent(event);
+              return (
+                <div
+                  key={event.id}
+                  className="flex items-center justify-between rounded-2xl bg-[color:var(--surface-muted)] p-4"
+                >
+                  <div>
+                    <div className="font-semibold">{formatted.title}</div>
+                    <div className="text-sm text-[color:var(--muted)]">{formatted.detail}</div>
+                  </div>
+                  <span className="text-xs text-[color:var(--muted)]">{formatEventTime(event.created_at)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="card p-6 space-y-4">
+          <div className="font-display text-lg">Service Health</div>
+          <div className="space-y-3">
+            {[
+              { label: "Vector Database", value: "Operational", status: "bg-emerald-500" },
+              { label: "Indexing Queue", value: "Stable", status: "bg-emerald-500" },
+              { label: "GPU Cluster", value: "90% Utilized", status: "bg-amber-400" }
+            ].map((service) => (
+              <div key={service.label} className="flex items-center justify-between rounded-2xl border border-[color:var(--border)] p-3">
+                <div>
+                  <div className="text-sm font-semibold">{service.label}</div>
+                  <div className="text-xs text-[color:var(--muted)]">{service.value}</div>
+                </div>
+                <span className={`h-2.5 w-2.5 rounded-full ${service.status}`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderDocuments = () => (
+    <section className="space-y-6">
+      <PageHeader
+        eyebrow="Curation Workspace"
+        title="Document Library"
+        subtitle="Upload, organize, and monitor document ingestion across tenants."
+        action={
+          <button
+            className="rounded-2xl bg-[color:var(--accent)] px-5 py-2 text-sm text-white shadow"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Upload Document
+          </button>
+        }
+      />
+      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="space-y-6">
+          <div className="card p-6 space-y-4">
+            <div className="text-sm font-semibold">New Upload</div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <input
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                placeholder="Document title"
+                value={uploadTitle}
+                onChange={(e) => {
+                  setUploadTitle(e.target.value);
+                  setUploadTitleEdited(true);
+                }}
+              />
+              <select
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                value={sourceType}
+                onChange={(e) => setSourceType(e.target.value)}
+              >
+                <option value="pdf">PDF</option>
+                <option value="docx">DOCX</option>
+                <option value="txt">TXT</option>
+                <option value="html">HTML</option>
+              </select>
+              <select
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                value={tenantId}
+                onChange={(e) => setTenantId(e.target.value)}
+              >
+                <option value="">Select tenant</option>
+                {tenants.map((tenant) => (
+                  <option key={tenant.id} value={tenant.id}>
+                    {tenant.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label className="block cursor-pointer rounded-2xl border-2 border-dashed border-[color:var(--border)] p-6 text-center">
+              <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
+              <div className="text-sm text-[color:var(--muted)]">Drop files or click to browse</div>
+              {selectedFiles.length > 0 && (
+                <div className="mt-2 text-xs text-[color:var(--muted)]">
+                  Selected: {selectedFiles.map((file) => file.name).join(", ")}
+                </div>
+              )}
+            </label>
+            <button
+              className="w-full rounded-2xl bg-[color:var(--accent-strong)] px-5 py-2 text-sm text-white"
+              onClick={handleUpload}
+              disabled={uploading}
+            >
+              {uploading ? "Uploading..." : "Upload to Library"}
+            </button>
+            {uploadMessage && <div className="text-xs text-[color:var(--muted)]">{uploadMessage}</div>}
+          </div>
+
+          <div className="card p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="font-display text-lg">Recent Documents</div>
+              <button className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]" onClick={fetchDocuments}>
+                Refresh
+              </button>
+            </div>
+            <div className="space-y-3">
+              {documents.length === 0 && (
+                <div className="text-sm text-[color:var(--muted)]">No documents uploaded yet.</div>
+              )}
+              {documents.slice(0, 6).map((doc) => (
+                <div key={doc.id} className="flex items-center justify-between rounded-2xl border border-[color:var(--border)] p-4">
+                  <div>
+                    <div className="font-semibold">{doc.title}</div>
+                    <div className="text-xs text-[color:var(--muted)]">
+                      {doc.source_type.toUpperCase()} · {doc.status}
+                    </div>
+                  </div>
+                  <button className="text-xs text-[color:var(--muted)] underline" onClick={() => fetchPreview(doc.id)}>
+                    Preview
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          {previewData && (
+            <div className="card p-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="font-display text-lg">Preview</div>
+                <button
+                  className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]"
+                  onClick={() => setPreviewData(null)}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="text-xs text-[color:var(--muted)]">
+                {previewLoading ? "Loading preview..." : previewData.title}
+              </div>
+              <div className="max-h-[280px] overflow-auto rounded-2xl border border-[color:var(--border)] p-4 text-sm">
+                {previewData.preview_text || "No preview available yet."}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-6">
+          <div className="card p-6 space-y-4">
+            <div className="font-display text-lg">Library Stats</div>
+            {[
+              { label: "Total Files", value: documents.length },
+              { label: "Active Tenant", value: activeTenantName },
+              { label: "Index Status", value: documents.length ? "Healthy" : "Waiting" }
+            ].map((item) => (
+              <div key={item.label} className="flex items-center justify-between rounded-2xl bg-[color:var(--surface-muted)] p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">{item.label}</div>
+                <div className="text-sm font-semibold">{item.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="card p-6 space-y-4">
+            <div className="font-display text-lg">Recent Actions</div>
+            <div className="space-y-3 text-sm text-[color:var(--muted)]">
+              <div>• Policy: Auto-index enabled</div>
+              <div>• Last crawl: 28 minutes ago</div>
+              <div>• Pending uploads: {Math.max(0, documents.length - 4)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderOrganization = () => (
+    <section className="space-y-6">
+      <PageHeader
+        eyebrow="Admin Portal"
+        title="Organization Management"
+        subtitle="Manage tenants, governance, and organization-wide access."
+      />
+      <div className="grid gap-4 lg:grid-cols-3">
+        {[
+          { label: "Active Tenants", value: orgMetrics?.total_tenants ?? "—" },
+          { label: "Governed Users", value: orgMetrics?.total_users ?? "—" },
+          { label: "Resource Utilization", value: "84%" }
+        ].map((metric) => (
+          <div key={metric.label} className="card p-5 space-y-2">
+            <div className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{metric.label}</div>
+            <div className="text-2xl font-semibold">{metric.value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="card p-6 space-y-4">
+          <div className="font-display text-lg">Tenants</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {tenants.length === 0 ? (
+              <div className="text-sm text-[color:var(--muted)]">No tenants available.</div>
+            ) : (
+              tenants.map((tenant) => (
+                <div key={tenant.id} className="rounded-2xl border border-[color:var(--border)] p-4">
+                  <div className="font-semibold">{tenant.name}</div>
+                  <div className="text-xs text-[color:var(--muted)]">{tenant.slug}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        <div className="card p-6 space-y-4">
+          <div className="font-display text-lg">Governance Log</div>
+          <div className="space-y-3 text-sm text-[color:var(--muted)]">
+            <div>• Tenant Created · Stellar Tech</div>
+            <div>• User Migration · 12 users moved</div>
+            <div>• Quota Alert · 90% storage reached</div>
+          </div>
+        </div>
+      </div>
+      {isOrgAdmin && (
+        <div className="card p-6 space-y-4">
+          <div className="font-display text-lg">Create Tenant</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <input
+              className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+              placeholder="Tenant name"
+              value={tenantNameInput}
+              onChange={(e) => {
+                setTenantNameInput(e.target.value);
+                if (!tenantSlugInput.trim()) {
+                  setTenantSlugInput(slugify(e.target.value));
+                }
+              }}
+            />
+            <input
+              className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+              placeholder="Tenant slug"
+              value={tenantSlugInput}
+              onChange={(e) => setTenantSlugInput(e.target.value)}
+            />
+          </div>
+          {tenantCreateMessage && <div className="text-xs text-[color:var(--muted)]">{tenantCreateMessage}</div>}
+          <button
+            className="rounded-2xl bg-[color:var(--accent-strong)] px-5 py-2 text-sm text-white"
+            onClick={handleCreateTenant}
+            disabled={tenantCreating}
+          >
+            {tenantCreating ? "Creating..." : "Create Tenant"}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+
+  const renderUsage = () => (
+    <section className="space-y-6">
+      <PageHeader
+        eyebrow="Admin Portal"
+        title="Usage"
+        subtitle="Monitor token consumption and infrastructure efficiency."
+      />
+      <div className="grid gap-4 lg:grid-cols-3">
+        {[
+          { label: "Total Tokens", value: "1.2B" },
+          { label: "Avg. Latency", value: "240ms" },
+          { label: "Storage Used", value: "4.2 TB" }
+        ].map((metric) => (
+          <div key={metric.label} className="card p-5 space-y-2">
+            <div className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{metric.label}</div>
+            <div className="text-2xl font-semibold">{metric.value}</div>
+            <div className="h-1 rounded-full bg-[color:var(--accent-soft)]" />
+          </div>
+        ))}
+      </div>
+      <div className="card p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="font-display text-lg">Query Volume Over Time</div>
+          <span className="text-xs text-[color:var(--muted)]">Last 5 days</span>
+        </div>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={sampleAnalytics}>
+              <XAxis dataKey="name" stroke="currentColor" />
+              <YAxis stroke="currentColor" />
+              <Tooltip />
+              <Line type="monotone" dataKey="queries" stroke="var(--accent)" strokeWidth={3} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderUserManagement = () => (
+    <section className="space-y-6">
+      <PageHeader
+        eyebrow="Admin Portal"
+        title="User Management"
+        subtitle="Provision new identities and assign tenant roles."
+      />
+      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="space-y-6">
+          <div className="card p-6 space-y-4">
+            <div className="font-display text-lg">Create New User</div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <input
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                placeholder="Full name"
+                value={newUserName}
+                onChange={(e) => setNewUserName(e.target.value)}
+              />
+              <input
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                placeholder="Corporate email"
+                value={newUserEmail}
+                onChange={(e) => setNewUserEmail(e.target.value)}
+              />
+            </div>
+            <input
+              className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+              placeholder="Temporary password (optional)"
+              value={newUserTempPassword}
+              onChange={(e) => setNewUserTempPassword(e.target.value)}
+            />
+            {newUserResetLink && (
+              <div className="rounded-2xl bg-[color:var(--surface-muted)] p-3 text-xs break-all">
+                Reset link:{" "}
+                <a
+                  href={newUserResetLink}
+                  className="underline text-[color:var(--accent)]"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {newUserResetLink}
+                </a>
+              </div>
+            )}
+            {newUserMessage && <div className="text-xs text-[color:var(--muted)]">{newUserMessage}</div>}
+            <button
+              className="rounded-2xl bg-[color:var(--accent-strong)] px-5 py-2 text-sm text-white"
+              onClick={handleCreateUser}
+            >
+              Create User & Generate Link
+            </button>
+          </div>
+
+          <div className="card p-6 space-y-4">
+            <div className="font-display text-lg">Assign User to Tenant</div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <select
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                value={assignTenantId}
+                onChange={(e) => setAssignTenantId(e.target.value)}
+              >
+                <option value="">Select tenant</option>
+                {tenants.map((tenant) => (
+                  <option key={tenant.id} value={tenant.id}>
+                    {tenant.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                value={assignUserId}
+                onChange={(e) => setAssignUserId(e.target.value)}
+              >
+                <option value="">Select user</option>
+                {userOptions.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name} ({user.email})
+                  </option>
+                ))}
+              </select>
+              <select
+                className="w-full rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                value={assignRole}
+                onChange={(e) => setAssignRole(e.target.value)}
+              >
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+                <option value="owner">Owner</option>
+              </select>
+            </div>
+            {assignMessage && <div className="text-xs text-[color:var(--muted)]">{assignMessage}</div>}
+            <button
+              className="rounded-2xl bg-[color:var(--accent)] px-5 py-2 text-sm text-white"
+              onClick={handleAssignUser}
+              disabled={assigning}
+            >
+              {assigning ? "Assigning..." : "Confirm Assignment"}
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="card p-6 space-y-3">
+            <div className="font-display text-lg">Provisioning Policy</div>
+            <div className="text-sm text-[color:var(--muted)]">All new users start with zero-trust permissions.</div>
+            <div className="text-sm text-[color:var(--muted)]">Setup links expire after 24 hours.</div>
+            <div className="text-sm text-[color:var(--muted)]">Provisioning actions are audited.</div>
+          </div>
+          <div className="card p-6 space-y-4">
+            <div className="font-display text-lg">Need Bulk Import?</div>
+            <div className="text-sm text-[color:var(--muted)]">
+              Import multiple users at once via CSV or directory sync.
+            </div>
+            <button className="rounded-2xl bg-[color:var(--accent)] px-5 py-2 text-sm text-white">
+              Open Data Importer
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderChat = () => (
+    <section className="flex h-full flex-col">
+      <div className="grid h-full gap-4 lg:grid-cols-[260px_2fr_1fr]">
+        <aside className="card h-full p-4 flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">Chat History</div>
+            <button
+              className="rounded-full border border-[color:var(--border)] px-3 py-1 text-xs text-[color:var(--muted)]"
+              onClick={handleCreateChatSession}
+            >
+              New
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <div className="flex min-h-full flex-col gap-2 justify-start">
+            {chatSessions.length === 0 && (
+              <div className="text-sm text-[color:var(--muted)]">No chats yet.</div>
+            )}
+            {chatSessions.map((session) => (
+              <div
+                key={session.id}
+                className={`flex items-center justify-between gap-2 rounded-2xl px-3 py-2 text-sm transition ${
+                  activeSessionId === session.id
+                    ? "bg-[color:var(--accent)] text-white"
+                    : "border border-[color:var(--border)] text-[color:var(--muted-strong)]"
+                }`}
+              >
+                <button
+                  className="flex-1 text-left"
+                  onClick={() => setActiveSessionId(session.id)}
+                >
+                  {session.title || "Chat"}
+                </button>
+                <button
+                  className="h-7 w-7 rounded-full border border-[color:var(--border)] text-[color:var(--muted)] hover:text-[color:var(--accent)]"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteChatSession(session.id);
+                  }}
+                  title="Delete chat"
+                >
+                  <Trash2 className="mx-auto h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            </div>
+          </div>
+        </aside>
+
+        <div className="card h-full px-5 pt-5 pb-3 flex flex-col gap-3 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">Tenant</span>
+              {isOrgAdmin ? (
+                <select
+                  className="rounded-2xl border border-[color:var(--border)] bg-transparent p-2 text-sm"
+                  value={tenantId}
+                  onChange={(e) => setTenantId(e.target.value)}
+                >
+                  <option value="">Select tenant</option>
+                  {tenants.map((tenant) => (
+                    <option key={tenant.id} value={tenant.id}>
+                      {tenant.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="rounded-full bg-[color:var(--accent-soft)] px-3 py-1 text-xs text-[color:var(--muted)]">
+                  {activeTenantName}
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-[color:var(--muted)]">
+              Session: <span className="font-semibold text-[color:var(--text)]">{activeSession?.title || "None"}</span>
+            </div>
+          </div>
+
+          <div ref={chatScrollRef} className="flex-1 overflow-y-auto pr-2">
+            <div className="rounded-2xl bg-[color:var(--surface-muted)] p-4 text-sm text-[color:var(--muted)]">
+              Hello! I've analyzed your enterprise documents. How can I assist you today?
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {["Summarize Q3 revenue", "Explain quantum specs", "Locate cooling requirements"].map((prompt) => (
+                <button
+                  key={prompt}
+                  className="rounded-full border border-[color:var(--border)] px-3 py-1 text-xs text-[color:var(--muted)]"
+                  onClick={() => setChatInput(prompt)}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {chatMessages.map((msg) => (
+                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                      msg.role === "user"
+                        ? "bg-[color:var(--accent)] text-white"
+                        : "bg-[color:var(--surface-muted)] text-[color:var(--text)]"
+                    }`}
+                  >
+                    <div className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)] mb-1">
+                      {msg.role === "user" ? "You" : "Assistant"}
+                    </div>
+                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {chatError && <div className="text-xs text-red-500">{chatError}</div>}
+
+          <div className="border-t border-[color:var(--border)] pt-2 pb-1">
+            <div className="flex items-center gap-3">
+              <input
+                className="flex-1 rounded-2xl border border-[color:var(--border)] bg-transparent p-3"
+                placeholder="Ask anything about your data..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendChat();
+                  }
+                }}
+              />
+              <button
+                className="rounded-2xl bg-[color:var(--accent-strong)] px-5 py-2 text-sm text-white"
+                onClick={handleSendChat}
+                disabled={chatSending}
+              >
+                {chatSending ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <aside className="flex h-full flex-col gap-4">
+          <div className="card flex-1 p-5 space-y-4 overflow-y-auto">
+            <div className="font-display text-lg">Document Citations</div>
+            {lastAssistantCitations.length === 0 ? (
+              <div className="text-sm text-[color:var(--muted)]">No citations yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {lastAssistantCitations.slice(0, 3).map((citation) => (
+                  <div key={citation.chunk_id} className="rounded-2xl border border-[color:var(--border)] p-3 text-xs">
+                    <div className="font-semibold">Source {citation.document_id.slice(0, 8)}</div>
+                    <div className="text-[color:var(--muted)]">{citation.text.slice(0, 120)}...</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card flex-1 p-5 space-y-4 overflow-y-auto">
+            <div className="font-display text-lg">Documents in Scope</div>
+            <div className="space-y-2">
+              {documents.length === 0 && (
+                <div className="text-sm text-[color:var(--muted)]">No documents available.</div>
+              )}
+              {documents.slice(0, 6).map((doc) => (
+                <label
+                  key={doc.id}
+                  className={`flex items-center gap-2 rounded-2xl border p-2 text-xs ${
+                    selectedDocIds.includes(doc.id)
+                      ? "border-[color:var(--accent)] bg-[color:var(--accent-soft)]"
+                      : "border-[color:var(--border)]"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedDocIds.includes(doc.id)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setSelectedDocIds((prev) => (checked ? [...prev, doc.id] : prev.filter((id) => id !== doc.id)));
+                    }}
+                  />
+                  <span className="truncate">{doc.title}</span>
+                </label>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-[color:var(--muted)]">
+              <input
+                type="checkbox"
+                checked={useSelectedOnly}
+                onChange={(e) => setUseSelectedOnly(e.target.checked)}
+              />
+              Use selected documents only
+            </label>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
 
   if (!authed) {
     return (
@@ -773,810 +1546,31 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen p-4">
-      <div
-        className={`w-full h-full grid grid-cols-1 gap-6 ${
-          sidebarCollapsed ? "lg:grid-cols-[72px_1fr]" : "lg:grid-cols-[260px_1fr]"
-        }`}
-      >
-        <aside className={`card p-4 space-y-6 fade-in ${sidebarCollapsed ? "items-center" : ""}`}>
-          <div className="flex items-start justify-between">
-            {sidebarCollapsed && (
-              <div className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">CR</div>
-            )}
-            <button
-              className="ml-2 h-6 w-6 rounded-full border border-[color:var(--border)] text-[color:var(--muted)] hover:text-white hover:bg-[color:var(--accent)] flex items-center justify-center"
-              onClick={() => setSidebarCollapsed((prev) => !prev)}
-              title={sidebarCollapsed ? "Expand" : "Collapse"}
-            >
-              {sidebarCollapsed ? "›" : "‹"}
-            </button>
-          </div>
-          <div className="space-y-2">
-            {visibleNavItems.map((item) => (
-              <button
-                key={item}
-                onClick={() => setActive(item)}
-                className={`w-full text-left px-4 py-2 rounded-xl transition flex items-center gap-3 ${
-                  active === item
-                    ? "bg-[color:var(--accent)] text-white"
-                    : "hover:bg-[color:var(--bg-secondary)]"
-                }`}
-              >
-                <span className="flex items-center justify-center">
-                  {navIconComponents[item]}
-                </span>
-                {!sidebarCollapsed && <span>{item}</span>}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center justify-between">
-            {!sidebarCollapsed && (
-              <span className="text-sm text-[color:var(--muted)]">Theme</span>
-            )}
-            <button
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-              className="badge"
-            >
-              {theme === "light" ? "Dark" : "Light"}
-            </button>
-          </div>
-          <button
-            className="text-sm text-[color:var(--muted)] underline"
-            onClick={() => {
-              localStorage.removeItem("access_token");
-              setAuthed(false);
-            }}
-          >
-            {sidebarCollapsed ? "Out" : "Log out"}
-          </button>
-        </aside>
-
-        <main className="h-full flex flex-col gap-6 overflow-hidden">
-          <header className="card p-6 fade-in space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-2xl bg-[color:var(--accent)] text-white flex items-center justify-center text-sm font-semibold">
-                CR
-              </div>
-              <div>
-                <div className="font-display text-lg">CitadelRAG</div>
-                <div className="text-xs text-[color:var(--muted)]">Knowledge Control Room</div>
-              </div>
-            </div>
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div>
-                <h2 className="font-display text-3xl">{active}</h2>
-                <p className="text-[color:var(--muted)]">
-                  Manage documents, run queries, evaluate retrieval, and monitor usage.
-                </p>
-              </div>
-            </div>
-          </header>
-
-          {active === "Documents" && (
-            <section className="card p-6 fade-in space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-xl">Upload Documents</h3>
-                <div className="flex items-center gap-2">
-                  <span className="badge">Accepted: PDF, DOCX, TXT, HTML</span>
-                  <button
-                    className="badge"
-                    onClick={fetchDocuments}
-                  >
-                    Refresh
-                  </button>
-                </div>
-              </div>
-              <div className="grid md:grid-cols-2 gap-4">
-                <input
-                  className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                  placeholder="Document title"
-                  value={uploadTitle}
-                  onChange={(e) => {
-                    setUploadTitle(e.target.value);
-                    setUploadTitleEdited(true);
-                  }}
-                />
-                <select
-                  className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                  value={sourceType}
-                  onChange={(e) => setSourceType(e.target.value)}
-                >
-                  <option value="pdf">PDF</option>
-                  <option value="docx">DOCX</option>
-                  <option value="txt">TXT</option>
-                  <option value="html">HTML</option>
-                </select>
-              </div>
-              <div className="grid md:grid-cols-2 gap-4">
-                <select
-                  className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                  value={tenantId}
-                  onChange={(e) => setTenantId(e.target.value)}
-                >
-                  <option value="">Select tenant</option>
-                  {tenants.map((tenant) => (
-                    <option key={tenant.id} value={tenant.id}>
-                      {tenant.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <label
-                className="border-2 border-dashed border-[color:var(--border)] rounded-2xl p-8 text-center block cursor-pointer"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="hidden"
-                  onChange={handleFileChange}
-                />
-                <p className="text-[color:var(--muted)]">Drop files here or click to upload.</p>
-                <button
-                  type="button"
-                  className="mt-4 px-4 py-2 rounded-xl bg-[color:var(--accent)] text-white inline-flex items-center justify-center"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    fileInputRef.current?.click();
-                  }}
-                >
-                  Choose File
-                </button>
-                {selectedFiles.length > 0 && (
-                  <div className="mt-3 text-sm text-[color:var(--muted)]">
-                    Selected: {selectedFiles.map((file) => file.name).join(", ")}
-                  </div>
-                )}
-              </label>
-              <button
-                className="w-full px-6 py-2 rounded-xl bg-[color:var(--accent-strong)] text-white"
-                onClick={handleUpload}
-                disabled={uploading}
-              >
-                {uploading ? "Uploading..." : "Upload"}
-              </button>
-              {uploadMessage && (
-                <div className="text-sm text-[color:var(--muted)]">{uploadMessage}</div>
-              )}
-              <div className="grid md:grid-cols-2 gap-4">
-                {documents.length === 0 && (
-                  <div className="text-sm text-[color:var(--muted)]">
-                    No documents yet. Upload one to get started.
-                  </div>
-                )}
-                {documents.map((doc) => (
-                  <div key={doc.id} className="p-4 rounded-xl bg-[color:var(--bg-secondary)] space-y-1">
-                    <div className="font-semibold">{doc.title}</div>
-                    <div className="text-sm text-[color:var(--muted)]">
-                      Status: {doc.status} · Type: {doc.source_type}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {active === "Chat" && (
-            <section
-              className="grid gap-6 flex-1 min-h-0"
-              style={{ gridTemplateColumns: `1fr ${rightPanelWidth}px` }}
-            >
-              <div className="card p-6 pb-8 fade-in space-y-4 h-full flex flex-col min-h-0">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">Tenant</span>
-                    {isOrgAdmin ? (
-                      <select
-                        className="p-2 rounded-xl border border-[color:var(--border)] bg-transparent text-sm"
-                        value={tenantId}
-                        onChange={(e) => setTenantId(e.target.value)}
-                      >
-                        <option value="">Select tenant</option>
-                        {tenants.map((tenant) => (
-                          <option key={tenant.id} value={tenant.id}>
-                            {tenant.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="badge">{activeTenantName}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">Session</span>
-                    <span className="badge">{activeSession?.title || "None"}</span>
-                    <span className="badge">Total: {chatSessions.length}</span>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="flex-1 p-2 rounded-xl border border-[color:var(--border)] bg-transparent text-sm"
-                      placeholder="New chat title"
-                      value={chatTitleInput}
-                      onChange={(e) => setChatTitleInput(e.target.value)}
-                    />
-                    <button
-                      className="px-3 py-2 rounded-xl bg-[color:var(--accent)] text-white text-sm"
-                      onClick={handleCreateChatSession}
-                    >
-                      New
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {chatSessions.map((session) => (
-                      <button
-                        key={session.id}
-                        onClick={() => setActiveSessionId(session.id)}
-                        className={`px-3 py-1 rounded-full text-sm border ${
-                          activeSessionId === session.id
-                            ? "border-[color:var(--accent-strong)] bg-[color:var(--accent)] text-white"
-                            : "border-[color:var(--border)] text-[color:var(--muted)]"
-                        }`}
-                      >
-                        {session.title || "Chat"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-4 flex-1 overflow-y-auto">
-                  {chatMessages.length === 0 && (
-                    <div className="text-sm text-[color:var(--muted)]">
-                      Ask a question to start chatting.
-                    </div>
-                  )}
-                  {chatMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
-                          msg.role === "user"
-                            ? "bg-[color:var(--accent)] text-white"
-                            : "bg-[color:var(--bg-secondary)]"
-                        }`}
-                      >
-                        <div className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)] mb-1">
-                          {msg.role === "user" ? "You" : "Assistant"}
-                        </div>
-                        <div className="text-sm whitespace-pre-wrap">{msg.content}</div>
-                        {msg.citations && msg.citations.length > 0 && msg.role === "assistant" && (
-                          <div className="mt-2 text-xs text-[color:var(--muted)]">
-                            {msg.citations.length} citations
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {chatError && <div className="text-sm text-red-500">{chatError}</div>}
-                {highlightText.trim().length > 0 && (
-                  <div className="flex items-center justify-between gap-3 rounded-xl border border-[color:var(--border)] bg-[color:var(--bg-secondary)] px-4 py-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="uppercase tracking-[0.2em] text-[color:var(--muted)]">Highlight</span>
-                      <span className="text-[color:var(--muted)]">
-                        {highlightText.trim().slice(0, 140)}
-                        {highlightText.trim().length > 140 ? "…" : ""}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-xs underline text-[color:var(--muted)]"
-                      onClick={() => setHighlightText("")}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                )}
-                <div className="flex items-center gap-3 pt-2">
-                  <input
-                    className="flex-1 p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    placeholder="Ask about your documents..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                  />
-                  <button
-                    className="px-6 py-2 rounded-xl bg-[color:var(--accent-strong)] text-white"
-                    onClick={handleSendChat}
-                    disabled={chatSending}
-                  >
-                    {chatSending ? "Sending..." : "Send"}
-                  </button>
-                </div>
-                <label className="flex items-center gap-2 text-sm text-[color:var(--muted)]">
-                  <input
-                    type="checkbox"
-                    checked={useSelectedOnly}
-                    onChange={(e) => setUseSelectedOnly(e.target.checked)}
-                  />
-                  Use selected documents only
-                </label>
-              </div>
-
-              <aside className="card p-6 fade-in space-y-4 h-full flex flex-col relative">
-                <div
-                  className="absolute -left-2 top-0 bottom-0 w-2 cursor-col-resize"
-                  onMouseDown={() => {
-                    resizingRef.current = true;
-                  }}
-                  title="Drag to resize"
-                />
-                <div className="flex items-center justify-between">
-                  <h4 className="font-display text-lg">Documents</h4>
-                  {isOrgAdmin ? (
-                    <select
-                      className="p-2 rounded-xl border border-[color:var(--border)] bg-transparent text-sm"
-                      value={tenantId}
-                      onChange={(e) => setTenantId(e.target.value)}
-                    >
-                      <option value="">Select tenant</option>
-                      {tenants.map((tenant) => (
-                        <option key={tenant.id} value={tenant.id}>
-                          {tenant.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="badge">{tenantId ? tenantId.slice(0, 8) : "No tenant"}</span>
-                  )}
-                </div>
-                <div className="space-y-2 flex-1 overflow-y-auto">
-                  {documents.length === 0 && (
-                    <div className="text-sm text-[color:var(--muted)]">No documents uploaded yet.</div>
-                  )}
-                  {documents.map((doc) => (
-                    <label
-                      key={doc.id}
-                      className={`flex items-center gap-2 p-2 rounded-xl border ${
-                        selectedDocIds.includes(doc.id)
-                          ? "border-[color:var(--accent-strong)]"
-                          : "border-[color:var(--border)]"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedDocIds.includes(doc.id)}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setSelectedDocIds((prev) =>
-                            checked ? [...prev, doc.id] : prev.filter((id) => id !== doc.id)
-                          );
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="text-left text-sm underline text-[color:var(--muted)]"
-                        onClick={() => fetchPreview(doc.id)}
-                      >
-                        {doc.title}
-                      </button>
-                    </label>
-                  ))}
-                </div>
-
-                {previewData && (
-                  <div className="border-t border-[color:var(--border)] pt-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold">Preview</div>
-                      <button
-                        className="text-xs underline text-[color:var(--muted)]"
-                        onClick={() => setPreviewExpanded((prev) => !prev)}
-                      >
-                        {previewExpanded ? "Collapse" : "Expand"}
-                      </button>
-                    </div>
-                    <div
-                      className={`text-sm whitespace-pre-wrap border border-[color:var(--border)] rounded-xl p-3 bg-transparent ${
-                        previewExpanded ? "max-h-[60vh]" : "max-h-[30vh]"
-                      } overflow-auto`}
-                      onMouseUp={handleHighlightMouseUp}
-                    >
-                      {previewData.preview_text || "No preview available yet."}
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-[color:var(--border)] space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">Upload document</div>
-                  <input
-                    className="w-full p-2 rounded-xl border border-[color:var(--border)] bg-transparent text-sm"
-                    placeholder="Document title"
-                    value={uploadTitle}
-                    onChange={(e) => {
-                      setUploadTitle(e.target.value);
-                      setUploadTitleEdited(true);
-                    }}
-                  />
-                  <select
-                    className="w-full p-2 rounded-xl border border-[color:var(--border)] bg-transparent text-sm"
-                    value={sourceType}
-                    onChange={(e) => setSourceType(e.target.value)}
-                  >
-                    <option value="pdf">PDF</option>
-                    <option value="docx">DOCX</option>
-                    <option value="txt">TXT</option>
-                    <option value="html">HTML</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="w-full px-3 py-2 rounded-xl bg-[color:var(--accent)] text-white"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    Choose File
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    onChange={handleFileChange}
-                  />
-                  <button
-                    className="w-full px-3 py-2 rounded-xl bg-[color:var(--accent-strong)] text-white"
-                    onClick={handleUpload}
-                    disabled={uploading}
-                  >
-                    {uploading ? "Uploading..." : "Upload"}
-                  </button>
-                  {uploadMessage && (
-                    <div className="text-xs text-[color:var(--muted)]">{uploadMessage}</div>
-                  )}
-                </div>
-              </aside>
-            </section>
-          )}
-
-          {active === "Evaluations" && (
-            <section className="card p-6 fade-in space-y-4">
-              <h3 className="font-display text-xl">Evaluation Runs</h3>
-              <div className="grid md:grid-cols-3 gap-4">
-                {['Recall@5', 'MRR', 'nDCG@5'].map((metric) => (
-                  <div key={metric} className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                    <div className="text-sm text-[color:var(--muted)]">{metric}</div>
-                    <div className="text-2xl font-semibold">0.78</div>
-                  </div>
-                ))}
-              </div>
-              <button className="px-6 py-2 rounded-xl bg-[color:var(--accent)] text-white">
-                Run Evaluation
-              </button>
-            </section>
-          )}
-
-          {active === "Analytics" && (
-            <section className="card p-6 fade-in space-y-4">
-              <h3 className="font-display text-xl">Usage Analytics</h3>
-              <div className="grid md:grid-cols-3 gap-4">
-                <div className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                  <div className="text-sm text-[color:var(--muted)]">Query Volume</div>
-                  <div className="text-2xl font-semibold">740</div>
-                </div>
-                <div className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                  <div className="text-sm text-[color:var(--muted)]">Avg Latency</div>
-                  <div className="text-2xl font-semibold">1.4s</div>
-                </div>
-                <div className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                  <div className="text-sm text-[color:var(--muted)]">No-Answer Rate</div>
-                  <div className="text-2xl font-semibold">6%</div>
-                </div>
-              </div>
-              <div className="h-60 bg-[color:var(--bg-secondary)] rounded-xl p-4">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={sampleAnalytics}>
-                    <XAxis dataKey="name" stroke="currentColor" />
-                    <YAxis stroke="currentColor" />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="queries" stroke="var(--accent-strong)" strokeWidth={3} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </section>
-          )}
-
-          {active === "Settings" && (
-            <section className="card p-6 fade-in space-y-4">
-              <h3 className="font-display text-xl">Settings</h3>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">LLM Provider</div>
-                  <select
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    value={settingsState.llm_provider}
-                    onChange={(e) =>
-                      setSettingsState({ ...settingsState, llm_provider: e.target.value })
-                    }
-                  >
-                    <option value="groq">Groq</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">LLM Model</div>
-                  <input
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    placeholder="e.g. llama-3.1-70b"
-                    value={settingsState.llm_model}
-                    onChange={(e) =>
-                      setSettingsState({ ...settingsState, llm_model: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">Embedding Provider</div>
-                  <select
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    value={settingsState.embed_provider}
-                    onChange={(e) =>
-                      setSettingsState({ ...settingsState, embed_provider: e.target.value })
-                    }
-                  >
-                    <option value="openai">OpenAI</option>
-                    <option value="huggingface">HuggingFace</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">Embedding Model</div>
-                  <input
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    placeholder="e.g. text-embedding-3-large"
-                    value={settingsState.embed_model}
-                    onChange={(e) =>
-                      setSettingsState({ ...settingsState, embed_model: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">OpenAI API Key</div>
-                  <input
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    placeholder={settingsState.has_openai_key ? "Saved (enter to replace)" : "Enter OpenAI key"}
-                    type="password"
-                    value={openaiKeyInput}
-                    onChange={(e) => setOpenaiKeyInput(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">Groq API Key</div>
-                  <input
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    placeholder={settingsState.has_groq_key ? "Saved (enter to replace)" : "Enter Groq key"}
-                    type="password"
-                    value={groqKeyInput}
-                    onChange={(e) => setGroqKeyInput(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">Lattice API Key</div>
-                  <input
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    placeholder={settingsState.has_lattice_key ? "Saved (enter to replace)" : "Enter Lattice key"}
-                    type="password"
-                    value={latticeKeyInput}
-                    onChange={(e) => setLatticeKeyInput(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">Chunking Strategy</div>
-                  <select
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    value={settingsState.chunk_strategy_id}
-                    onChange={(e) =>
-                      setSettingsState({ ...settingsState, chunk_strategy_id: e.target.value })
-                    }
-                  >
-                    <option value="">Default (active)</option>
-                    {chunkStrategies.map((strategy) => (
-                      <option key={strategy.id} value={strategy.id}>
-                        {strategy.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              {settingsMessage && (
-                <div className="text-sm text-[color:var(--muted)]">{settingsMessage}</div>
-              )}
-              <button
-                className="px-6 py-2 rounded-xl bg-[color:var(--accent)] text-white"
-                onClick={handleSaveSettings}
-              >
-                Save Settings
-              </button>
-            </section>
-          )}
-
-          {active === "Organization" && (
-            <section className="card p-6 fade-in space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-xl">Organization</h3>
-                <span className="badge">
-                  {orgInfo ? `${orgInfo.name} · ${orgInfo.role}` : "Loading..."}
-                </span>
-              </div>
-              {orgMetrics && (
-                <div className="grid md:grid-cols-4 gap-4">
-                  <div className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                    <div className="text-sm text-[color:var(--muted)]">Tenants</div>
-                    <div className="text-2xl font-semibold">{orgMetrics.total_tenants}</div>
-                  </div>
-                  <div className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                    <div className="text-sm text-[color:var(--muted)]">Users</div>
-                    <div className="text-2xl font-semibold">{orgMetrics.total_users}</div>
-                  </div>
-                  <div className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                    <div className="text-sm text-[color:var(--muted)]">Documents</div>
-                    <div className="text-2xl font-semibold">{orgMetrics.total_documents}</div>
-                  </div>
-                  <div className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                    <div className="text-sm text-[color:var(--muted)]">Queries</div>
-                    <div className="text-2xl font-semibold">{orgMetrics.total_queries}</div>
-                  </div>
-                </div>
-              )}
-              {orgMetrics && (
-                <div className="space-y-3">
-                  <div className="text-sm text-[color:var(--muted)]">Team activity</div>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {orgMetrics.by_tenant.map((item) => (
-                      <div key={item.tenant_id} className="p-4 rounded-xl bg-[color:var(--bg-secondary)]">
-                        <div className="font-semibold">{item.tenant_name}</div>
-                        <div className="text-sm text-[color:var(--muted)]">
-                          Docs: {item.documents} · Queries: {item.queries}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!isOrgAdmin && (
-                <div className="text-sm text-[color:var(--muted)]">
-                  You do not have admin access to create tenants.
-                </div>
-              )}
-              {isOrgAdmin && (
-                <div className="space-y-4">
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <input
-                      className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                      placeholder="Tenant name"
-                      value={tenantNameInput}
-                      onChange={(e) => {
-                        setTenantNameInput(e.target.value);
-                        if (!tenantSlugInput.trim()) {
-                          setTenantSlugInput(slugify(e.target.value));
-                        }
-                      }}
-                    />
-                    <input
-                      className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                      placeholder="Tenant slug (auto)"
-                      value={tenantSlugInput}
-                      onChange={(e) => setTenantSlugInput(e.target.value)}
-                    />
-                  </div>
-                  {tenantCreateMessage && (
-                    <div className="text-sm text-[color:var(--muted)]">{tenantCreateMessage}</div>
-                  )}
-                  <button
-                    className="px-6 py-2 rounded-xl bg-[color:var(--accent-strong)] text-white"
-                    onClick={handleCreateTenant}
-                    disabled={tenantCreating}
-                  >
-                    {tenantCreating ? "Creating..." : "Create Tenant"}
-                  </button>
-                </div>
-              )}
-              {isOrgAdmin && (
-                <div className="space-y-4 pt-4 border-t border-[color:var(--border)]">
-                  <h4 className="font-display text-lg">Create User</h4>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <input
-                      className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                      placeholder="Full name"
-                      value={newUserName}
-                      onChange={(e) => setNewUserName(e.target.value)}
-                    />
-                    <input
-                      className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                      placeholder="Email"
-                      value={newUserEmail}
-                      onChange={(e) => setNewUserEmail(e.target.value)}
-                    />
-                  </div>
-                  <input
-                    className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                    placeholder="Temporary password (optional)"
-                    value={newUserTempPassword}
-                    onChange={(e) => setNewUserTempPassword(e.target.value)}
-                  />
-                  {newUserResetLink && (
-                    <div className="p-3 rounded-xl bg-[color:var(--bg-secondary)] text-sm break-all">
-                      Reset link: {newUserResetLink}
-                    </div>
-                  )}
-                  {newUserMessage && <div className="text-sm text-[color:var(--muted)]">{newUserMessage}</div>}
-                  <button
-                    className="px-6 py-2 rounded-xl bg-[color:var(--accent)] text-white"
-                    onClick={handleCreateUser}
-                  >
-                    Create User
-                  </button>
-                </div>
-              )}
-              {isOrgAdmin && (
-                <div className="space-y-4 pt-4 border-t border-[color:var(--border)]">
-                  <h4 className="font-display text-lg">Assign User to Tenant</h4>
-                  <div className="grid md:grid-cols-3 gap-4">
-                    <select
-                      className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                      value={assignTenantId}
-                      onChange={(e) => setAssignTenantId(e.target.value)}
-                    >
-                      <option value="">Select tenant</option>
-                      {tenants.map((tenant) => (
-                        <option key={tenant.id} value={tenant.id}>
-                          {tenant.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                      value={assignUserId}
-                      onChange={(e) => setAssignUserId(e.target.value)}
-                    >
-                      <option value="">Select user</option>
-                      {userOptions.map((user) => (
-                        <option key={user.id} value={user.id}>
-                          {user.name} ({user.email})
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="w-full p-3 rounded-xl border border-[color:var(--border)] bg-transparent"
-                      value={assignRole}
-                      onChange={(e) => setAssignRole(e.target.value)}
-                    >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                      <option value="owner">Owner</option>
-                    </select>
-                  </div>
-                  {assignMessage && <div className="text-sm text-[color:var(--muted)]">{assignMessage}</div>}
-                  <button
-                    className="px-6 py-2 rounded-xl bg-[color:var(--accent-strong)] text-white"
-                    onClick={handleAssignUser}
-                    disabled={assigning}
-                  >
-                    {assigning ? "Assigning..." : "Assign User"}
-                  </button>
-                  {newUserLabel && (
-                    <div className="text-xs text-[color:var(--muted)]">
-                      Last created user: {newUserLabel}
-                    </div>
-                  )}
-                </div>
-              )}
-              <div className="space-y-3">
-                <div className="text-sm text-[color:var(--muted)]">Tenants</div>
-                {tenants.length === 0 ? (
-                  <div className="text-sm text-[color:var(--muted)]">No tenants available.</div>
-                ) : (
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {tenants.map((tenant) => (
-                      <div key={tenant.id} className="p-4 rounded-xl bg-[color:var(--bg-secondary)] space-y-1">
-                        <div className="font-semibold">{tenant.name}</div>
-                        <div className="text-sm text-[color:var(--muted)]">{tenant.slug}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-        </main>
+    <div className="min-h-screen bg-[color:var(--bg)]">
+      <div className="flex h-screen gap-4 p-4">
+        <SidebarNav
+          items={navConfig}
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed((prev) => !prev)}
+          onLogout={() => {
+            localStorage.removeItem("access_token");
+            setAuthed(false);
+          }}
+          theme={theme}
+          onThemeToggle={() => setTheme(theme === "light" ? "dark" : "light")}
+        />
+        <div className="flex-1 overflow-y-auto pr-2">
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={renderDashboard()} />
+            <Route path="/documents" element={renderDocuments()} />
+            <Route path="/organization" element={renderOrganization()} />
+            <Route path="/usage" element={renderUsage()} />
+            <Route path="/user-management" element={renderUserManagement()} />
+            <Route path="/chat" element={renderChat()} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );
